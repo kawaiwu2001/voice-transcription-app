@@ -1,18 +1,19 @@
-import { NextResponse } from 'next/server'
-import OpenAI from 'openai'
-import fs from 'fs'
-import path from 'path'
-import os from 'os'
+import { NextResponse } from 'next/server';
+import OpenAI from 'openai';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import https from 'https';
 
-// Initialize OpenAI with increased timeout
+// Initialize OpenAI with increased timeout and retry settings
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
-    timeout: 120000, // 2 minutes
+    timeout: 300000, // 5 minutes
     maxRetries: 5,
-    httpAgent: new (require('https').Agent)({
+    httpAgent: new https.Agent({
         keepAlive: true,
-        timeout: 120000,
-    })
+        timeout: 300000,
+    }),
 });
 
 export async function POST(request) {
@@ -37,42 +38,48 @@ export async function POST(request) {
             size: audioFile.size,
         });
 
-        // Validate file size (OpenAI limit is 25MB)
-        const MAX_FILE_SIZE = 25 * 1024 * 1024;
-        if (audioFile.size > MAX_FILE_SIZE) {
-            return NextResponse.json(
-                { error: 'File too large', details: 'Audio file must be less than 25MB' },
-                { status: 400 }
-            );
-        }
-
+        // Create temporary file with .webm extension
         const tempDir = os.tmpdir();
-        tempFilePath = path.join(tempDir, `audio-${Date.now()}.mp3`);
+        tempFilePath = path.join(tempDir, `audio-${Date.now()}.webm`);
 
+        // Convert Blob to Buffer and save
         const bytes = await audioFile.arrayBuffer();
         const buffer = Buffer.from(bytes);
 
+        // Write file synchronously
         fs.writeFileSync(tempFilePath, buffer);
         console.log('File saved:', tempFilePath);
 
+        // Verify file exists and is readable
+        const stats = fs.statSync(tempFilePath);
+        console.log('File stats:', {
+            size: stats.size,
+            path: tempFilePath,
+            exists: fs.existsSync(tempFilePath)
+        });
+
+        // Create file stream
         fileStream = fs.createReadStream(tempFilePath);
 
         console.log('Starting transcription with OpenAI Whisper');
+        const transcription = await openai.audio.transcriptions.create({
+            file: fileStream,
+            model: 'whisper-1',
+            language: 'en',
+            response_format: 'text',
+            temperature: 0.2,
+        });
 
-        const transcription = await retryOnFailure(async () => {
-            return openai.audio.transcriptions.create({
-                file: fileStream,
-                model: 'whisper-1',
-                language: 'en',
-                response_format: 'text',
-                temperature: 0.2,
-            });
-        }, 3, 2000); // 3 retries with 2s delay
+        console.log('Transcription successful:', transcription);
 
-        console.log('Transcription successful');
+        // Cleanup
         fileStream.destroy();
+        fs.unlinkSync(tempFilePath);
+        console.log('Temporary file cleaned up');
 
-        return NextResponse.json({ text: transcription });
+        return NextResponse.json({
+            text: transcription,
+        });
     } catch (error) {
         console.error('Server error:', {
             message: error.message,
@@ -80,7 +87,11 @@ export async function POST(request) {
             cause: error.cause,
         });
 
-        if (fileStream) fileStream.destroy();
+        // Cleanup
+        if (fileStream) {
+            fileStream.destroy();
+        }
+
         if (tempFilePath && fs.existsSync(tempFilePath)) {
             try {
                 await fs.promises.unlink(tempFilePath);
@@ -90,33 +101,25 @@ export async function POST(request) {
             }
         }
 
-        if (error.message.includes('ECONNRESET') || error.message.includes('timeout')) {
+        if (
+            error.message.includes('ECONNRESET') ||
+            error.message.includes('timeout')
+        ) {
             return NextResponse.json(
-                { error: 'Connection timeout. Please try with a shorter audio clip.', details: error.message },
+                {
+                    error: 'Connection timeout. Please try with a shorter audio clip.',
+                    details: error.message,
+                },
                 { status: 503 }
             );
         }
 
         return NextResponse.json(
-            { error: 'Failed to process audio', details: error.message },
+            {
+                error: 'Failed to process audio',
+                details: error.message,
+            },
             { status: 500 }
         );
-    } finally {
-        if (tempFilePath && fs.existsSync(tempFilePath)) {
-            await fs.promises.unlink(tempFilePath).catch(console.error);
-        }
-    }
-}
-
-// Helper function for retry logic
-async function retryOnFailure(fn, retries, delay) {
-    for (let i = 0; i < retries; i++) {
-        try {
-            return await fn();
-        } catch (err) {
-            if (i === retries - 1) throw err;
-            console.log(`Retrying due to error: ${err.message}`);
-            await new Promise((resolve) => setTimeout(resolve, delay));
-        }
     }
 }

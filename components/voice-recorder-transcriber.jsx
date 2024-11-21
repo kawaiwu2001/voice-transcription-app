@@ -22,7 +22,9 @@ export default function VoiceRecorderTranscriber() {
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      mediaRecorderRef.current = new MediaRecorder(stream)
+      mediaRecorderRef.current = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus'
+      })
       chunksRef.current = []
 
       mediaRecorderRef.current.ondataavailable = (event) => {
