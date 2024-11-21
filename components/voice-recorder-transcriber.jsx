@@ -4,10 +4,16 @@ import { useState, useRef } from 'react'
 import { Button } from './ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Alert } from './ui/alert'
+import {
+  Mic,
+  Square,
+  FileAudio,
+  Download,
+  Activity
+} from 'lucide-react'
 
 const MAX_RETRIES = 3;
-const RETRY_DELAY = 1000; // 1 second
-const MAX_CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+const RETRY_DELAY = 1000;
 
 export default function VoiceRecorderTranscriber() {
   const [isRecording, setIsRecording] = useState(false)
@@ -17,7 +23,7 @@ export default function VoiceRecorderTranscriber() {
   const [error, setError] = useState(null)
   const mediaRecorderRef = useRef(null)
   const chunksRef = useRef([])
-  const [retryCount, setRetryCount] = useState(0);
+  const [retryCount, setRetryCount] = useState(0)
 
   const startRecording = async () => {
     try {
@@ -26,6 +32,10 @@ export default function VoiceRecorderTranscriber() {
         mimeType: 'audio/webm;codecs=opus'
       })
       chunksRef.current = []
+
+      setAudioBlob(null)
+      setTranscription('')
+      setError(null)
 
       mediaRecorderRef.current.ondataavailable = (event) => {
         chunksRef.current.push(event.data)
@@ -39,7 +49,6 @@ export default function VoiceRecorderTranscriber() {
 
       mediaRecorderRef.current.start()
       setIsRecording(true)
-      setError(null)
     } catch (err) {
       setError('Please allow microphone access to record audio.')
       console.error('Error accessing microphone:', err)
@@ -113,18 +122,6 @@ export default function VoiceRecorderTranscriber() {
     }
   };
 
-  // Helper function to compress audio if needed
-  const compressAudioIfNeeded = async (blob) => {
-    // If blob is small enough, return as is
-    if (blob.size <= MAX_CHUNK_SIZE) {
-      return blob;
-    }
-
-    // Here you could add audio compression logic if needed
-    // For now, we're just returning the original blob
-    return blob;
-  };
-
   const handleDownload = () => {
     if (!transcription) return
 
@@ -156,64 +153,86 @@ export default function VoiceRecorderTranscriber() {
   };
 
   return (
-    <Card className="w-full max-w-md">
-      <CardHeader>
-        <CardTitle>Voice Recorder</CardTitle>
+    <Card className="w-full max-w-md bg-white/50 backdrop-blur-sm shadow-xl">
+      <CardHeader className="border-b">
+        <CardTitle className="flex items-center gap-2">
+          <FileAudio className="w-5 h-5" />
+          Voice Recorder
+        </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-6 pt-6">
         {error && (
-          <Alert variant="destructive">
+          <Alert variant="destructive" className="animate-in slide-in-from-top">
             {error}
           </Alert>
         )}
 
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-4">
           <Button
             onClick={isRecording ? stopRecording : startRecording}
             variant={isRecording ? "destructive" : "default"}
+            className="h-12 text-lg font-medium transition-all duration-200 ease-in-out hover:scale-105"
           >
-            {isRecording ? 'Stop Recording' : 'Start Recording'}
+            {isRecording ? (
+              <><Square className="w-5 h-5 mr-2" /> Stop Recording</>
+            ) : (
+              <><Mic className="w-5 h-5 mr-2" /> Start Recording</>
+            )}
           </Button>
 
           {audioBlob && !isRecording && (
-            <Button
-              onClick={handleTranscribe}
-              disabled={isTranscribing}
-              variant="secondary"
-            >
-              {isTranscribing ? 'Transcribing...' : 'Transcribe'}
-            </Button>
+            <div className="space-y-4 animate-in fade-in-50">
+              <div className="p-4 rounded-lg bg-secondary/50">
+                <audio
+                  controls
+                  src={URL.createObjectURL(audioBlob)}
+                  className="w-full"
+                />
+              </div>
+
+              <Button
+                onClick={handleTranscribe}
+                disabled={isTranscribing}
+                variant="secondary"
+                className="w-full h-11"
+              >
+                {isTranscribing ? (
+                  <><Activity className="w-4 h-4 mr-2 animate-pulse" /> Transcribing...</>
+                ) : (
+                  'Transcribe Audio'
+                )}
+              </Button>
+            </div>
+          )}
+
+          {transcription && (
+            <div className="space-y-3 animate-in fade-in-50">
+              <div className="rounded-lg border p-4 bg-white/50">
+                <h3 className="font-semibold mb-2 text-sm text-gray-500">Transcription</h3>
+                <p className="whitespace-pre-wrap text-gray-800">{transcription}</p>
+              </div>
+              <Button
+                onClick={handleDownload}
+                variant="outline"
+                className="w-full"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Download Transcription
+              </Button>
+            </div>
           )}
         </div>
 
-        {audioBlob && !isRecording && (
-          <div className="mt-4">
-            <audio controls src={URL.createObjectURL(audioBlob)} />
-          </div>
-        )}
-
-        {transcription && (
-          <div className="mt-4 space-y-2">
-            <div className="rounded-lg border p-4 bg-secondary">
-              <h3 className="font-semibold mb-2">Transcription:</h3>
-              <p className="whitespace-pre-wrap">{transcription}</p>
-            </div>
-            <Button onClick={handleDownload} variant="outline">
-              Download Transcription
-            </Button>
-          </div>
-        )}
-
         {retryCount > 0 && isTranscribing && (
-          <Alert className="mt-2">
+          <Alert className="animate-in slide-in-from-bottom">
             Retry attempt {retryCount}/{MAX_RETRIES}...
           </Alert>
         )}
 
         <Button
           onClick={testConnection}
-          variant="outline"
-          className="mt-2"
+          variant="ghost"
+          className="w-full text-sm text-gray-500 hover:text-gray-800"
         >
           Test Connection
         </Button>
